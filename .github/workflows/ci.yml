@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: orbit-observability
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: orbit-observability
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package and local Orbit dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]' build
+      - name: Run tests
+        run: python -m pytest -q --cov=orbit_observability --cov-report=term-missing --cov-report=xml:coverage.xml
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: orbit-observability/coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+      - name: Check lint and formatting
+        run: |
+          python -m ruff check src tests
+          python -m ruff format --check src tests
+      - name: Check types
+        run: python -m mypy
+      - name: Build wheel and source distribution
+        run: python -m build
+
+  cloud-native-example:
+    name: Secrets and correlated telemetry example
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: orbit-observability
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: orbit-observability
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-core
+          path: orbit-core
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-testing
+          path: orbit-testing
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-tracing
+          path: orbit-tracing
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-logging
+          path: orbit-logging
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-logging-opentelemetry
+          path: orbit-logging-opentelemetry
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-metrics
+          path: orbit-metrics
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-metrics-opentelemetry
+          path: orbit-metrics-opentelemetry
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-secrets
+          path: orbit-secrets
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/orbit-secrets-aws
+          path: orbit-secrets-aws
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install the local Orbit workspace packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ../orbit-core -e ../orbit-testing -e ../orbit-tracing
+          python -m pip install -e ../orbit-logging -e ../orbit-logging-opentelemetry
+          python -m pip install -e ../orbit-metrics -e ../orbit-metrics-opentelemetry
+          python -m pip install -e ../orbit-secrets -e ../orbit-secrets-aws
+          python -m pip install -e '.[dev]'
+      - name: Verify secret and telemetry correlation
+        run: python examples/cloud_native.py

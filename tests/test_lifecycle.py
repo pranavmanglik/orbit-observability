@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from orbit_observability import (
+    LifecycleFailure,
     LifecycleOperation,
     ObservabilityLifecycle,
     ObservabilityLifecycleError,
@@ -105,12 +106,29 @@ async def test_timeout_cancels_slow_provider_and_reports_safe_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_that_suppresses_cancellation_is_still_reported_as_timed_out() -> None:
+    async def suppress_once() -> None:
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.02)
+
+    lifecycle = ObservabilityLifecycle((Provider("slow", flush=suppress_once),))
+
+    with pytest.raises(ObservabilityLifecycleError) as caught:
+        await lifecycle.force_flush(timeout_seconds=0.005)
+
+    assert caught.value.failures[0].code == "timeout"
+
+
+@pytest.mark.asyncio
 async def test_shutdown_is_one_shot_and_flush_is_rejected_after_close() -> None:
     provider = Provider("metrics")
     lifecycle = ObservabilityLifecycle((provider,))
     await lifecycle.shutdown()
     await lifecycle.shutdown()
     assert provider.stop_count == 1
+    assert provider.flush_count == 1
     assert lifecycle.closing
     with pytest.raises(RuntimeError, match="shutting down"):
         await lifecycle.force_flush()
@@ -129,6 +147,49 @@ async def test_shutdown_attempts_all_providers_before_raising() -> None:
     assert first.stop_count == second.stop_count == 1
     assert captured.value.failures[0].operation is LifecycleOperation.SHUTDOWN
     assert "vendor detail" not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_retries_only_provider_cleanup_that_failed() -> None:
+    attempts = 0
+
+    async def fail_once() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient vendor detail")
+
+    failing = Provider("retry", stop=fail_once)
+    healthy = Provider("healthy")
+    lifecycle = ObservabilityLifecycle((failing, healthy))
+
+    with pytest.raises(ObservabilityLifecycleError) as caught:
+        await lifecycle.shutdown()
+    assert caught.value.failures[0].operation is LifecycleOperation.SHUTDOWN
+    assert failing.flush_count == healthy.flush_count == 1
+    assert failing.stop_count == healthy.stop_count == 1
+
+    await lifecycle.shutdown()
+
+    assert attempts == 2
+    assert failing.flush_count == 1
+    assert failing.stop_count == 2
+    assert healthy.stop_count == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_releases_provider_after_flush_failure() -> None:
+    async def fail_flush() -> None:
+        raise RuntimeError("flush failure")
+
+    provider = Provider("metrics", flush=fail_flush)
+    lifecycle = ObservabilityLifecycle((provider,))
+
+    with pytest.raises(ObservabilityLifecycleError) as caught:
+        await lifecycle.shutdown()
+
+    assert caught.value.failures[0].operation is LifecycleOperation.FLUSH
+    assert provider.flush_count == provider.stop_count == 1
 
 
 @pytest.mark.asyncio
@@ -156,6 +217,20 @@ def test_constructor_rejects_duplicate_names_and_invalid_signals() -> None:
         ObservabilityLifecycle((Provider("metrics"), Provider("metrics")))
     with pytest.raises(ValueError, match="known telemetry signals"):
         ObservabilityLifecycle((Provider("bad", signals=frozenset()),))
+
+
+def test_lifecycle_failure_rejects_untrusted_diagnostic_fields() -> None:
+    with pytest.raises(ValueError, match="non-secret slug"):
+        LifecycleFailure("token=private", LifecycleOperation.FLUSH, "timeout")
+    with pytest.raises(ValueError, match="stable category"):
+        LifecycleFailure("metrics", LifecycleOperation.FLUSH, "raw-token=private")
+
+
+@pytest.mark.asyncio
+async def test_timeout_rejects_an_integer_too_large_to_convert_to_float() -> None:
+    lifecycle = ObservabilityLifecycle((Provider("metrics"),))
+    with pytest.raises(ValueError, match="at most 300 seconds"):
+        await lifecycle.force_flush(timeout_seconds=10**1000)
 
 
 @pytest.mark.asyncio

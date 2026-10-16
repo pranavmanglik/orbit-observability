@@ -1,17 +1,33 @@
-# Orbit Observability: security
+# Security
 
-## Package-specific security guidance
+## Telemetry content
 
-The README does not define separate package-specific security guarantees. Follow the implemented API and provider documentation; do not infer security properties that are not documented and tested.
+Logs, metrics, and traces can contain credentials, user identifiers, request bodies, internal
+hostnames, and business data. This package coordinates provider lifecycle only; it does not inspect
+or sanitize telemetry. Each instrumentation and exporter configuration must apply an explicit
+data-minimization policy before export. Avoid high-cardinality labels and never put secrets in
+metric attributes, span names, resource attributes, or log fields.
 
-## Credentials and sensitive data
+## Safe failure reporting
 
-Use least-privilege credentials and a secret manager for provider secrets. Do not commit secrets, tokens, private keys, personal data, request bodies, raw provider errors, or opaque cursors. Enable TLS certificate verification for remote services unless package documentation gives a narrowly scoped local-development exception.
+`LifecycleFailure` allows only a bounded lowercase provider slug, a known operation enum, and the
+stable categories `timeout` or `provider_failure`. `ObservabilityLifecycleError` omits raw vendor
+exceptions because those exceptions may include request data, exporter URLs, credentials, or
+telemetry values. Preserve this safe representation in application logs and metrics; avoid logging
+the original exception inside provider implementations unless they sanitize it first.
 
-## Vulnerability disclosure
+Provider names should be static identifiers, not endpoint URLs, tenant names, user input, or
+credentials. Names appear in lifecycle errors and may become metric labels; use a small, fixed set
+to keep cardinality bounded.
 
-Follow the repository [security policy](../../SECURITY.md). Do not post vulnerability details in public issues. The policy describes private reporting alternatives without claiming that a hosting-platform setting is enabled.
+## Provider and transport responsibilities
 
-## Limits
+Adapters own transport security, authentication, credential rotation, authorization, and
+exporter-specific redaction. Use least-privilege credentials and verified TLS for remote
+collectors. Do not disable certificate verification as a workaround. Configure timeouts and avoid
+exporting telemetry to an untrusted collector. Review retention, access controls, and data region
+for the selected backend.
 
-This page records source and package documentation, not an independent security audit. Validate the package, its provider SDKs, and its deployment configuration before production use.
+## Disclosure
+
+Follow the repository's [security policy](../../SECURITY.md) for private vulnerability reporting.

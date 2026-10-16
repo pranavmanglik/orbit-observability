@@ -5,9 +5,16 @@ metrics, and tracing providers. Provider-neutral logging, metrics, and tracing A
 adapters remain in their owning packages; this package composes their lifecycle without importing
 those packages or any vendor SDK.
 
-**Status:** pre-alpha lifecycle capability. It does not install instrumentation, collect telemetry,
+**Status:** unpublished v0.1.0-alpha review candidate; lifecycle capability. It does not install instrumentation, collect telemetry,
 select exporters, or configure a backend. Core and applications still decide which provider adapters
 to install and wire.
+
+Signal packages remain separately installable: `orbit-tracing` exports spans,
+`orbit-logging-opentelemetry` exports structured logs, and `orbit-metrics-opentelemetry` exports
+Core snapshots and trace exemplars. `orbit-secrets` and its provider adapters resolve versioned
+secret values independently of telemetry. The [coverage audit](docs/architecture/secrets-telemetry-audit.md)
+separates implemented workspace behavior from provider and release validation still outstanding.
+See the [cloud native example](examples/README.md) for secret handling and signal correlation.
 
 ## Install
 
